@@ -1,22 +1,25 @@
 package net.derek.tutorial.entity.custom;
 
 import net.minecraft.entity.EntityType;
+import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.ai.goal.*;
 import net.minecraft.entity.attribute.DefaultAttributeContainer;
 import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.entity.mob.HostileEntity;
 import net.minecraft.entity.passive.MerchantEntity;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.util.Hand;
 import net.minecraft.world.World;
 import software.bernie.geckolib.animatable.GeoEntity;
 import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
-import software.bernie.geckolib.core.animatable.instance.SingletonAnimatableInstanceCache;
+import software.bernie.geckolib.util.GeckoLibUtil;
 import software.bernie.geckolib.core.animation.*;
 import software.bernie.geckolib.core.object.PlayState;
 
 public class GolemEntity extends HostileEntity implements GeoEntity {
 
-    private AnimatableInstanceCache factory = new SingletonAnimatableInstanceCache(this);
+    private AnimatableInstanceCache factory = GeckoLibUtil.createInstanceCache(this);
+    private int attackCooldown = 0;
 
     public GolemEntity(EntityType<? extends HostileEntity> entityType, World world) {
         super(entityType, world);
@@ -33,30 +36,31 @@ public class GolemEntity extends HostileEntity implements GeoEntity {
 
     @Override
     protected void initGoals() {
-        this.goalSelector.add(2, new MeleeAttackGoal(this, 2.4D, false));
-        this.goalSelector.add(4, new WanderAroundFarGoal(this, 0.75f));
-        this.goalSelector.add(5, new LookAtEntityGoal(this, PlayerEntity.class, 8.0f));
+        this.goalSelector.add(1, new SwimGoal(this));
+        this.goalSelector.add(2, new GolemAttackGoal(this, 1.0D, false));
+        this.goalSelector.add(5, new WanderAroundFarGoal(this, 0.8D));
+        this.goalSelector.add(6, new LookAtEntityGoal(this, PlayerEntity.class, 8.0f));
         this.goalSelector.add(6, new LookAroundGoal(this));
 
         this.targetSelector.add(1, new ActiveTargetGoal<>(this, PlayerEntity.class, true));
         this.targetSelector.add(2, new ActiveTargetGoal<>(this, MerchantEntity.class, true));
     }
 
-    private <T extends GeoEntity> PlayState predicate(AnimationState<T> event) {
+    private PlayState predicate(AnimationState<GolemEntity> event) {
         if (event.isMoving()) {
             return event.setAndContinue(RawAnimation.begin().then("animation.golem.walk", Animation.LoopType.LOOP));
         }
         return event.setAndContinue(RawAnimation.begin().then("animation.golem.idle_2", Animation.LoopType.LOOP));
     }
 
-    private <T extends GeoEntity> PlayState attackPredicate(AnimationState<T> event) {
-        if (this.handSwinging && event.getController().getAnimationState() == AnimationController.State.PAUSED) {
+    private PlayState attackPredicate(AnimationState<GolemEntity> event) {
+        if (this.handSwinging && event.getController().getAnimationState() == AnimationController.State.STOPPED) {
             event.getController().forceAnimationReset();
-            return event.setAndContinue(RawAnimation.begin().then("animation.golem.attack", Animation.LoopType.PLAY_ONCE));
+            event.setAndContinue(RawAnimation.begin().then("animation.golem.attack", Animation.LoopType.PLAY_ONCE));
+            this.handSwinging = false;
         }
-        return PlayState.STOP;
+        return PlayState.CONTINUE;
     }
-
 
     @Override
     public void registerControllers(AnimatableManager.ControllerRegistrar data) {
@@ -70,17 +74,32 @@ public class GolemEntity extends HostileEntity implements GeoEntity {
     }
 
     @Override
-    public double getBoneResetTime() {
-        return GeoEntity.super.getBoneResetTime();
+    public void tick() {
+        super.tick();
+        if (this.attackCooldown > 0) {
+            this.attackCooldown--;
+        }
     }
 
-    @Override
-    public boolean shouldPlayAnimsWhileGamePaused() {
-        return GeoEntity.super.shouldPlayAnimsWhileGamePaused();
-    }
+    private class GolemAttackGoal extends MeleeAttackGoal {
+        public GolemAttackGoal(GolemEntity golem, double speed, boolean pauseWhenMobIdle) {
+            super(golem, speed, pauseWhenMobIdle);
+        }
 
-    @Override
-    public AnimatableInstanceCache animatableCacheOverride() {
-        return GeoEntity.super.animatableCacheOverride();
+        @Override
+        public boolean canStart() {
+            return super.canStart() && GolemEntity.this.attackCooldown == 0;
+        }
+
+        @Override
+        protected void attack(LivingEntity target, double squaredDistance) {
+            double d = this.getSquaredMaxAttackDistance(target);
+            if (squaredDistance <= d && this.getCooldown() <= 0) {
+                this.resetCooldown();
+                this.mob.swingHand(Hand.MAIN_HAND);
+                this.mob.tryAttack(target);
+                GolemEntity.this.attackCooldown = 20; // 1 segundo de cooldown
+            }
+        }
     }
 }
